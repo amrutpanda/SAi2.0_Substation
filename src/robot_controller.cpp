@@ -222,13 +222,7 @@ int main(int argc, char const *argv[])
             posori_task->_desired_orientation = R;
             posori_task->computeTorques(posori_task_torques);
 
-            if (integrate_flag && (posori_task->_desired_position - posori_task->_current_position).norm() < 2* tol)
-            {
-                posori_task->_ki_pos = 250;
-                posori_task->_integrated_position_error.setZero();
-                integrate_flag = 0;
-            }
-            else if ((posori_task->_desired_position - posori_task->_current_position).norm() < 2* tol)
+            if ((posori_task->_desired_position - posori_task->_current_position).norm() < 2* tol)
             {
                 integrate_flag = 1;
                 if (traj_point_count >= path_size){
