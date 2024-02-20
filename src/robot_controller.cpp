@@ -234,7 +234,7 @@ int main(int argc, char const *argv[])
                 if (traj_point_count >= path_size){
                     traj_point_count = 0;
                     cout << "traj point: " << path_size << "\n";
-                    // cout << "moving to INIT pose.\n";
+                    cout << "moving to INIT pose.\n";
                     state = INIT;
     
                 }
