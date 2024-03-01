@@ -1,13 +1,3 @@
-/**
- * @file simviz.cpp
- * @author William Chong (wmchong@stanford.edu)
- * @brief Simulation 
- * @version 0.1
- * @date 2023-08-10
- * 
- * @copyright Copyright (c) 2023
- * 
- */
 
 #include "Sai2Model.h"
 #include "Sai2Graphics.h"
@@ -35,7 +25,7 @@ using namespace Eigen;
 using namespace chai3d;
 
 const string world_file = "../model/panda/world.urdf";
-const string robot_file = "../model/panda/panda_arm.urdf";
+const string robot_file = "../model/panda/panda_arm_hand.urdf";
 // const string robot_file = "./resources/iiwa14.urdf";
 const string robot_name = "panda";
 // const string robot_name = "iiwa14";
@@ -88,7 +78,10 @@ int main() {
 	graphics->getCameraPose(camera_name, camera_pos, camera_vertical, camera_lookat);
 
 	VectorXd joints(7);
-	joints << 0.2,0.2,0.2,0.2,0.2,0.2,0.2;
+
+	// set callback for redis client.
+	// redis_client.addEigenToReadCallback(0,JOINT_ANGLES_KEY,joints);
+	// joints << 0.2,0.2,0.2,0.2,0.2,0.2,0.2;
 
 	// load robots
 	Affine3d T_workd_robot = Affine3d::Identity();
@@ -96,6 +89,7 @@ int main() {
 	auto robot = new Sai2Model::Sai2Model(robot_file, false, T_workd_robot);
     // robot->_q = redis_client.getEigenMatrixJSON(JOINT_ANGLES_KEY);   
 	robot->_q = joints;
+	joints.setZero();
 	robot->updateModel();
 
 	/*------- Set up visualization -------*/
@@ -140,10 +134,12 @@ int main() {
 		// update graphics. this automatically waits for the correct amount of time
 		int width, height;
 		glfwGetFramebufferSize(window, &width, &height);
-        // robot->_q = redis_client.getEigenMatrixJSON(JOINT_ANGLES_KEY);
-		robot->_q = joints;
+        robot->_q = redis_client.getEigenMatrixJSON(JOINT_ANGLES_KEY);
+		// robot->_q = joints;
         robot->updateModel();
+		
 		graphics->updateGraphics(robot_name, robot);
+		graphics->showLinkFrame(1,robot_name);
 		graphics->render(camera_name, width, height);
 
 		// swap buffers
@@ -220,6 +216,9 @@ int main() {
 		}
 		graphics->setCameraPose(camera_name, camera_pos, cam_up_axis, camera_lookat);
 		glfwGetCursorPos(window, &last_cursorx, &last_cursory);
+		
+		// //set redis_client callback;
+		// redis_client.executeReadCallback(0); 
 	}
 
 	// stop simulation
