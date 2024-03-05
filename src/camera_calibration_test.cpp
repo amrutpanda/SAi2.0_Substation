@@ -98,13 +98,13 @@ int main(int argc, char const *argv[])
     joint_task->_use_velocity_saturation_flag = true;
     joint_task->_saturation_velocity = (M_PI/10)*VectorXd::Ones(dof);
 
-    joint_task->_kp = 50.0;
-    joint_task->_kv = 15.0;
+    joint_task->_kp = 400.0;
+    joint_task->_kv = 50.0;
     joint_task->_ki = 0.0;
     
     VectorXd q_init (dof);
     VectorXd q_look (dof);
-    // q_init << 0.622035,0.202844,-0.748116,-2.34133,0.161845,2.42087,0.440028;
+    
     // q_init << 0.162313,-1.09008,-0.153488,-2.61457,-0.133069,1.54065,0.778681; // -ve x direction pose U shape pose.
     // q_init << 0.104063,-0.766375,0.0456267,-2.19672,0.00163179,1.43858,-2.22505; // -ve x direction 180 rotated end-effector
     q_init << -1.62959,-0.288922,0.152178,-1.47316,-0.0436687,1.1186,0.845332;

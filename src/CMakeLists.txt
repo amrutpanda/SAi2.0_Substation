@@ -1,4 +1,5 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
+
 add_executable(visualizer visualizer.cpp)
 target_link_libraries(visualizer ${SUBSTATION_COMMON_LIBRARIES})
 
@@ -10,6 +11,9 @@ target_link_libraries(controller ${SUBSTATION_COMMON_LIBRARIES})
 
 add_executable(robot_controller robot_controller.cpp)
 target_link_libraries(robot_controller ${SUBSTATION_COMMON_LIBRARIES})
+
+add_executable(robot_controller_v2 robot_controller_v2.cpp)
+target_link_libraries(robot_controller_v2 ${SUBSTATION_COMMON_LIBRARIES})
 
 add_executable(save_pose save_pose.cpp)
 target_link_libraries(save_pose ${SUBSTATION_COMMON_LIBRARIES})

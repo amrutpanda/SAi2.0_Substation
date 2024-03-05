@@ -21,7 +21,8 @@ enum State {
     INIT = 0,
     LOOK,
     TRAJ,
-    IDLE
+    IDLE,
+    CAM
 };
 
 std::string CONTROLLER_RUNNING_KEY;
@@ -34,6 +35,8 @@ std::string ROBOT_SENSED_FORCE_KEY;
 std::string ROBOT_END_EFFECTOR_POSE;
 std::string ROBOT_END_EFFECTOR_ROTATION_MATRIX;
 std::string STATE_TRANSITION_KEY;
+std::string POSE_FROM_CAMERA_KEY;
+std::string ROTATION_FROM_CAMERA_KEY;
 
 bool runloop = false;
 void sighandler(int) {runloop = false;}
@@ -70,6 +73,9 @@ int main(int argc, char const *argv[])
         ROBOT_END_EFFECTOR_POSE = "sai2::FrankaPanda::Bonnie::end_effector::pose";
         ROBOT_END_EFFECTOR_ROTATION_MATRIX = "sai2::Frankapanda::Bonnie::end_effector::rotation_matrix";
         STATE_TRANSITION_KEY = "sai2::substation::state_transition";
+        POSE_FROM_CAMERA_KEY = "sai2::substation::camera::pose";
+        ROTATION_FROM_CAMERA_KEY = "sai2::substation::camera::rotation";
+
 
 	}
     signal(SIGABRT, &sighandler);
@@ -104,16 +110,15 @@ int main(int argc, char const *argv[])
     joint_task->_use_velocity_saturation_flag = true;
     // joint_task->_saturation_velocity.array() = 35 * (M_PI / 180);
 
-    joint_task->_kp = 50.0;
-    joint_task->_kv = 15.0;
+    joint_task->_kp = 400.0;
+    joint_task->_kv = 50.0;
     joint_task->_ki = 0.0;
     
     VectorXd q_init (dof);
     VectorXd q_look (dof);
-    // q_init << 0.622035,0.202844,-0.748116,-2.34133,0.161845,2.42087,0.440028;
     // q_init << 0.162313,-1.09008,-0.153488,-2.61457,-0.133069,1.54065,0.778681; // -ve x direction pose U shape pose.
-    q_init << 0.104063,-0.766375,0.0456267,-2.19672,0.00163179,1.43858,-2.22505; // -ve x direction 180 rotated end-effector
-    q_look << 0.0368602,-1.47652,0.0553265,-2.53061,-0.0289527,1.65088,0.845973;
+    q_init << -1.62959,-0.288922,0.152178,-1.47316,-0.0436687,1.1186,0.845332;; // -ve x direction 180 rotated end-effector
+    q_look << -1.62959,-0.288922,0.152178,-1.47316,-0.0436687,1.1186,0.845332;;
     joint_task->_desired_position = q_init;
     int integrate_flag = 1;
 
@@ -174,6 +179,7 @@ int main(int argc, char const *argv[])
     redis_client.addEigenToWriteCallback(0,ROBOT_END_EFFECTOR_POSE,ee_pose);
     redis_client.addEigenToWriteCallback(0,ROBOT_END_EFFECTOR_ROTATION_MATRIX,R);
     redis_client.addIntToReadCallback(0,STATE_TRANSITION_KEY,state);
+    
     // In the beginning change the state transition key to IDLE;
     redis_client.set(STATE_TRANSITION_KEY,"3");
     runloop = true;
@@ -251,6 +257,7 @@ int main(int argc, char const *argv[])
                     cout << "traj point: " << path_size << "\n";
                     cout << "moving to INIT pose.\n";
                     state = INIT;
+                    redis_client.set(STATE_TRANSITION_KEY,"3");
                     posori_task->_ki_pos = 10.0;
                     // posori_task->_integrated_position_error.setZero();
     
@@ -273,6 +280,19 @@ int main(int argc, char const *argv[])
             // }
             
             command_torques = posori_task_torques + coriolis ;
+        }
+        else if(state == CAM)
+        {
+            Vector3d pose_from_camera = redis_client.getEigenMatrix(POSE_FROM_CAMERA_KEY);
+            MatrixXd rot_from_camera = redis_client.getEigenMatrix(ROTATION_FROM_CAMERA_KEY);
+            // find transformation to base frame.
+            Affine3d T;
+            // robot->transform(T,"camera_link",pose_from_camera,rot_from_camera);
+            robot->transform(T,"camera_link",pose_from_camera);
+            // compute trajectory.
+            generate_path(path,0.5,0.4,T);
+            // set the state transition key to IDLE;
+            redis_client.set(STATE_TRANSITION_KEY,"3");
         }
         else if (state == IDLE)
         {
@@ -299,17 +319,17 @@ void generate_path(std::vector<Vector3d>path,double l, double w, Affine3d T)
 {
     // clear the container.
     path.clear();
-    // make the rectangle in local coordinate system.
+    // make the rectangle in local coordinate system starting from top left corner.
     double offset = 0.05; // z axis offset for safety.
     MatrixXd corner_points(3,5);
-    corner_points.row(0) = Vector3d(-l/2,w/2,offset);
-    corner_points.row(1) = Vector3d(l/2,w/2,offset);
-    corner_points.row(2) = Vector3d(l/2,-w/2,offset);
-    corner_points.row(3) = Vector3d(-l/2,-w/2,offset);
-    corner_points.row(4) = corner_points.row(0);
+    corner_points.col(0) = Vector3d(-l/2,w/2,offset);
+    corner_points.col(1) = Vector3d(l/2,w/2,offset);
+    corner_points.col(2) = Vector3d(l/2,-w/2,offset);
+    corner_points.col(3) = Vector3d(-l/2,-w/2,offset);
+    corner_points.col(4) = corner_points.col(0);
 
     int n = 10; // no. intermediate points.
-    for (int i = 0; i < corner_points.rows()-1; i++)
+    for (int i = 0; i < corner_points.cols()-1; i++)
     {
         Vector3d xi = corner_points.row(i);
         Vector3d xe = corner_points.row(i+1);
