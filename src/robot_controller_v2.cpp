@@ -284,7 +284,7 @@ int main(int argc, char const *argv[])
         else if(state == CAM)
         {
             Vector3d pose_from_camera = redis_client.getEigenMatrix(POSE_FROM_CAMERA_KEY);
-            MatrixXd rot_from_camera = redis_client.getEigenMatrix(ROTATION_FROM_CAMERA_KEY);
+            // MatrixXd rot_from_camera = redis_client.getEigenMatrix(ROTATION_FROM_CAMERA_KEY);
             // find transformation to base frame.
             Affine3d T;
             // robot->transform(T,"camera_link",pose_from_camera,rot_from_camera);
@@ -326,21 +326,31 @@ void generate_path(std::vector<Vector3d>path,double l, double w, Affine3d T)
     corner_points.col(1) = Vector3d(l/2,w/2,offset);
     corner_points.col(2) = Vector3d(l/2,-w/2,offset);
     corner_points.col(3) = Vector3d(-l/2,-w/2,offset);
-    corner_points.col(4) = corner_points.col(0);
+    // last point same as first point.
+    corner_points.col(4) = Vector3d(-l/2,w/2,offset);
 
     int n = 10; // no. intermediate points.
     for (int i = 0; i < corner_points.cols()-1; i++)
     {
-        Vector3d xi = corner_points.row(i);
-        Vector3d xe = corner_points.row(i+1);
+        Vector3d xi = corner_points.col(i);
+        Vector3d xe = corner_points.col(i+1);
         Vector3d diff = xe - xi;
+        cout<< "T: " << T.matrix() << "\n";
         for (int j = 0; j < n; j++)
         {
             Vector3d temp_var = xi + ((double)j/(double)n)* diff;
             // transform and save to container.
             path.push_back(T.rotation()*temp_var + T.translation());
+            // path.push_back(temp_var);
         }
         
     }
-    path.push_back(corner_points.row(0));
+    path.push_back(path[0]);
+
+    // print all elements of vector.
+    cout << "printing the trajectory\n";
+    for (int i = 0; i < path.size(); i++)
+    {
+        cout << "\ni : " << i << "\n" << path[i] << "\n"; 
+    }
 }
