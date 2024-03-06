@@ -29,6 +29,7 @@ std::string ROBOT_END_EFFECTOR_POSE;
 std::string ROBOT_END_EFFECTOR_ROTATION_MATRIX;
 std::string STATE_TRANSITION_KEY;
 std::string POSE_FROM_CAMERA_KEY;
+std::string ROTATION_FROM_CAMERA_KEY;
 
 bool runloop = false;
 void sighandler(int) {runloop = false;}
@@ -66,6 +67,7 @@ int main(int argc, char const *argv[])
         ROBOT_END_EFFECTOR_ROTATION_MATRIX = "sai2::Frankapanda::Bonnie::end_effector::rotation_matrix";
         STATE_TRANSITION_KEY = "sai2::substation::state_transition";
         POSE_FROM_CAMERA_KEY = "sai2::substation::camera::pose";
+        ROTATION_FROM_CAMERA_KEY = "sai2::substation::camera::rotation";
 
 	}
     signal(SIGABRT, &sighandler);
@@ -98,8 +100,8 @@ int main(int argc, char const *argv[])
     joint_task->_use_velocity_saturation_flag = true;
     joint_task->_saturation_velocity = (M_PI/10)*VectorXd::Ones(dof);
 
-    joint_task->_kp = 400.0;
-    joint_task->_kv = 50.0;
+    joint_task->_kp = 200.0;
+    joint_task->_kv = 28.0;
     joint_task->_ki = 0.0;
     
     VectorXd q_init (dof);
@@ -131,7 +133,7 @@ int main(int argc, char const *argv[])
 
     posori_task->_kp_pos = 200.0;
     posori_task->_kv_pos = 28.0;
-    posori_task->_ki_pos = 10.0;
+    posori_task->_ki_pos = 0.0;
     posori_task->_kp_ori = 50.0;
     posori_task->_kv_ori = 10.8;
     posori_task->_ki_ori = 10.0;
@@ -166,10 +168,10 @@ int main(int argc, char const *argv[])
     redis_client.addEigenToWriteCallback(0,ROBOT_END_EFFECTOR_POSE,ee_pose);
     redis_client.addEigenToWriteCallback(0,ROBOT_END_EFFECTOR_ROTATION_MATRIX,R);
     redis_client.addIntToReadCallback(0,STATE_TRANSITION_KEY,state);
-    redis_client.addIntToWriteCallback(0,STATE_TRANSITION_KEY,state);
+    // redis_client.addIntToWriteCallback(0,STATE_TRANSITION_KEY,state);
 
     // In the beginning change the state transition key to IDLE;
-    // redis_client.set(STATE_TRANSITION_KEY,"4");
+    redis_client.set(STATE_TRANSITION_KEY,"4");
     runloop = true;
 	redis_client.set(CONTROLLER_RUNNING_KEY,"1");
 
@@ -235,8 +237,9 @@ int main(int argc, char const *argv[])
             posori_task->_desired_orientation = R_init;
             posori_task->updateTaskModel((MatrixXd::Identity(dof,dof)));
             posori_task->computeTorques(posori_task_torques);
+            
             // set some _ki value for accurate tracking.
-            if (integrate_flag && (posori_task->_desired_position - posori_task->_current_position).norm() < 20* tol)
+            if (integrate_flag && (posori_task->_desired_position - posori_task->_current_position).norm() < 2* tol)
             {
                 posori_task->_integrated_position_error.setZero();
                 posori_task->_ki_pos = 250;
@@ -246,7 +249,8 @@ int main(int argc, char const *argv[])
             {
             //     command_torques = coriolis;
                 state = IDLE; // change state to IDLE when the robot reaches within the error limit.
-                cout << "\nchanging MOVE state to IDLE\n";
+                cout << "\nrobot desired pos: " << posori_task->_desired_position << "\n";
+                cout << "\nrobot current pos: " << posori_task->_current_position <<"\n";
             }
             command_torques = posori_task_torques + coriolis;
         }
@@ -259,12 +263,16 @@ int main(int argc, char const *argv[])
         else if (state == POSE)
         {
             // robot_pos = (get pose from redis.)
-            pose_from_camera = redis_client.getEigenMatrix(POSE_FROM_CAMERA_KEY);
+            pose_from_camera = redis_client.getEigenMatrixJSON(POSE_FROM_CAMERA_KEY);
+            rot_from_camera = redis_client.getEigenMatrixJSON(ROTATION_FROM_CAMERA_KEY);
             robot->position(robot_pos,"camera_link",pose_from_camera);
+            robot->rotation(R_init,"camera_link",rot_from_camera);
+            robot_pos = robot_pos + Vector3d(0,0,0.005);
             cout<< "Received position from camera: "<< robot_pos<< "\n";
             // print the pose to verify the format.
             command_torques = coriolis;
-            state = IDLE;
+            // set to IDLE.
+            redis_client.set(STATE_TRANSITION_KEY,"4");
         }
 
         redis_client.executeWriteCallback(0);
