@@ -78,6 +78,9 @@ set(SUBSTATION_COMMON_LIBRARIES
 	${GLFW_LIBRARY}
 	${SAI2-PRIMITIVES_LIBRARIES}
 	)
+	
+# add_subdirectory(${PROJECT_SOURCE_DIR}/src/dual_proxy_haptic)
+# add_subdirectory(${PROJECT_SOURCE_DIR}/src/dual_proxy_robot)
 
 set (SUBSTATION_BINARY_DIR ${PROJECT_SOURCE_DIR}/bin)
 add_subdirectory(src)

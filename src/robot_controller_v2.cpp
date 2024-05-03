@@ -6,6 +6,7 @@
 #include <redis/RedisClient.h>
 #include <timer/LoopTimer.h>
 #include <signal.h>
+#include <unistd.h>
 #include <string>
 #include <vector>
 
@@ -15,7 +16,7 @@ int signnum(double x) {
   return 1;
 }
 
-void generate_path(std::vector<Vector3d>path,double l, double w, Affine3d T);
+void generate_path(std::vector<Vector3d>& path,double l, double w, Affine3d T);
 
 enum State {
     INIT = 0,
@@ -37,6 +38,7 @@ std::string ROBOT_END_EFFECTOR_ROTATION_MATRIX;
 std::string STATE_TRANSITION_KEY;
 std::string POSE_FROM_CAMERA_KEY;
 std::string ROTATION_FROM_CAMERA_KEY;
+std::string CAMERA_TRIGGER_KEY;
 
 bool runloop = false;
 void sighandler(int) {runloop = false;}
@@ -75,7 +77,7 @@ int main(int argc, char const *argv[])
         STATE_TRANSITION_KEY = "sai2::substation::state_transition";
         POSE_FROM_CAMERA_KEY = "sai2::substation::camera::pose";
         ROTATION_FROM_CAMERA_KEY = "sai2::substation::camera::rotation";
-
+        CAMERA_TRIGGER_KEY = "sai2::substation::camera::trigger";
 
 	}
     signal(SIGABRT, &sighandler);
@@ -102,23 +104,35 @@ int main(int argc, char const *argv[])
     Matrix3d R = Matrix3d::Identity();
     // R << 0.999829,0.018033,-0.004094,-0.018039,0.999836,-0.001361,0.004069,0.001435,0.999991;
     // R << 0.772916,-0.631131,-0.065375,-0.633495,-0.773396,-0.023316,-0.035846,0.059436,-0.997588;
-    R << -0.726272,0.686320,0.038636,0.687345,0.724304,0.054231,0.009236,0.065943,-0.997781;
+    // R << -0.726272,0.686320,0.038636,0.687345,0.724304,0.054231,0.009236,0.065943,-0.997781;
+    R << -0.998378,-0.054084,0.017773,-0.054754,0.997710,-0.039698,-0.015586,-0.040607,-0.999054;
 
     // joint task0.999829,0.018033,-0.004094],[-0.018039,0.999836,-0.001361],[0.004069,0.001435,0.999991]
     auto joint_task = new Sai2Primitives::JointTask(robot);
     VectorXd joint_task_torques = VectorXd::Zero(dof);
     joint_task->_use_velocity_saturation_flag = true;
-    // joint_task->_saturation_velocity.array() = 35 * (M_PI / 180);
+    joint_task->_saturation_velocity.array() = (M_PI/8)*VectorXd::Ones(dof);
 
-    joint_task->_kp = 400.0;
-    joint_task->_kv = 50.0;
+    joint_task->_kp = 300.0;
+    joint_task->_kv = 15.0;
     joint_task->_ki = 0.0;
     
     VectorXd q_init (dof);
     VectorXd q_look (dof);
     // q_init << 0.162313,-1.09008,-0.153488,-2.61457,-0.133069,1.54065,0.778681; // -ve x direction pose U shape pose.
-    q_init << -1.62959,-0.288922,0.152178,-1.47316,-0.0436687,1.1186,0.845332;; // -ve x direction 180 rotated end-effector
-    q_look << -1.62959,-0.288922,0.152178,-1.47316,-0.0436687,1.1186,0.845332;;
+    // q_init << -1.78969,-0.71409,0.1784,-2.12389,0.132822,1.78369,0.730236;; // -ve x direction 180 rotated end-effector
+    // angles when box in put on plane
+
+    q_init << -1.76471,-1.00067,0.0906794,-2.41891,0.218476,2.53667,0.543382;
+    q_look << -1.78969,-0.71409,0.1784,-2.12389,0.132822,1.78369,0.730236;
+
+    q_init << -1.62959,-0.288922,0.152178,-1.47316,-0.0436687,1.1186,0.845332;
+    q_init << -1.46734,-0.356668,-0.0455042,-1.65865,-0.0728375,1.23512,0.855649;
+
+    // angles when box is not put on plane.
+    // q_init << -0.018177,-1.10597,-0.0369388,-2.37861,-0.142355,1.73228,-2.33937;
+    // q_look << -0.109834,-1.45582,-0.0775309,-2.52178,-0.122086,1.7794,0.693609;
+
     joint_task->_desired_position = q_init;
     int integrate_flag = 1;
 
@@ -146,17 +160,18 @@ int main(int argc, char const *argv[])
     posori_task->_use_velocity_saturation_flag = true;
 
     MatrixXd N_prec = MatrixXd::Identity(dof,dof);
+    
 
-    posori_task->_kp_pos = 200.0;
-    posori_task->_kv_pos = 28.0;
-    posori_task->_ki_pos = 10.0;
+    posori_task->_kp_pos = 400.0;
+    posori_task->_kv_pos = 15.0;
+    posori_task->_ki_pos = 0.0;
     posori_task->_kp_ori = 50.0;
     posori_task->_kv_ori = 10.8;
-    posori_task->_ki_ori = 10.0;
+    posori_task->_ki_ori = 0.0;
 
     posori_task->_e_max = 3e-2;
     posori_task->_e_min = 3e-3;
-    posori_task->_linear_saturation_velocity = 0.1;
+    posori_task->_linear_saturation_velocity = 0.2;
 
     // state handling.
     int state = INIT;
@@ -184,6 +199,7 @@ int main(int argc, char const *argv[])
     redis_client.set(STATE_TRANSITION_KEY,"3");
     runloop = true;
 	redis_client.set(CONTROLLER_RUNNING_KEY,"1");
+    redis_client.set(CAMERA_TRIGGER_KEY,"0");
 
      // initialize timer and controller counter.
     unsigned long long controller_counter = 0;
@@ -216,10 +232,19 @@ int main(int argc, char const *argv[])
             command_torques = joint_task_torques + coriolis;
 
             if (integrate_flag && (joint_task->_desired_position - joint_task->_current_position).norm() < 2 * tol) {
-                    joint_task->_ki = 150;
+                    joint_task->_ki = 250;
                     joint_task->_integrated_position_error.setZero();
                     integrate_flag = 0;
                 }
+            // change state to IDLE;
+            if ((joint_task->_desired_position - joint_task->_current_position).norm() < error/10)
+            {
+                cout << "\nReached INIT Pose\n";
+                joint_task->_ki = 0;              
+                joint_task->reInitializeTask();
+                posori_task->reInitializeTask();
+                redis_client.set(STATE_TRANSITION_KEY,"3");
+            }
         }
         else if (state == LOOK)
         {
@@ -229,10 +254,19 @@ int main(int argc, char const *argv[])
             command_torques = joint_task_torques + coriolis;
 
             if (integrate_flag && (joint_task->_desired_position - joint_task->_current_position).norm() < 2 * tol) {
-                    joint_task->_ki = 150;
+                    joint_task->_ki = 250;
                     joint_task->_integrated_position_error.setZero();
                     integrate_flag = 0;
                 }
+            // change state to IDLE;
+            if ((joint_task->_desired_position - joint_task->_current_position).norm() < error)
+            {
+                cout << "\nReached LOOK Pose\n";
+                joint_task->reInitializeTask();
+                posori_task->reInitializeTask();
+                redis_client.set(STATE_TRANSITION_KEY,"3");
+                // joint_task->reInitializeTask();
+            }
             
         }
         else if (state == TRAJ)
@@ -242,61 +276,93 @@ int main(int argc, char const *argv[])
             posori_task->updateTaskModel((MatrixXd::Identity(dof,dof)));
             posori_task->computeTorques(posori_task_torques);
             // set some _ki value for accurate tracking.
-            if ((posori_task->_desired_position - posori_task->_current_position).norm() < 20* tol)
+            if (integrate_flag && (posori_task->_desired_position - posori_task->_current_position).norm() < 2* tol)
             {
                 posori_task->_integrated_position_error.setZero();
                 posori_task->_ki_pos = 250;
-                
+                integrate_flag = 0;
+                cout << "Activating integral component in the controller.\n";    
             }
 
             if ((posori_task->_desired_position - posori_task->_current_position).norm() < error)
             {
-                integrate_flag = 1;
-                if (traj_point_count >= path_size){
+                if (traj_point_count >= path.size()){
+                    integrate_flag = 1;
                     traj_point_count = 0;
                     cout << "traj point: " << path_size << "\n";
                     cout << "moving to INIT pose.\n";
-                    state = INIT;
+                    // state = INIT;
+                    posori_task->_ki_pos = 0.0;
+                    posori_task->_integrated_position_error.setZero();
+                    posori_task->_integrated_orientation_error.setZero();
+                    joint_task->reInitializeTask();
+                    // posori_task->reInitializeTask();
                     redis_client.set(STATE_TRANSITION_KEY,"3");
-                    posori_task->_ki_pos = 10.0;
-                    // posori_task->_integrated_position_error.setZero();
     
                 }
                 else{
+                    integrate_flag = 1;
                     robot_pos = path[traj_point_count];
-                    cout<< "============\n";
+                    cout << "============\n";
+                    cout << "trajectory point: " << traj_point_count << "\n";
                     cout << "robot->_desired position: " << posori_task->_desired_position << "\n";
                     cout << "robot->_current position: " << posori_task->_current_position << "\n";
                     cout << "************\n";
-                    posori_task->_ki_pos = 10.0;
+                    posori_task->_ki_pos = 250.0;
                     posori_task->_integrated_position_error.setZero();
                     traj_point_count++;
                 }
                 
             }
+            
             // else
             // {
             //     // posori_task->_ki_pos = 0.0;
             // }
+            joint_task->computeTorques(joint_task_torques);
             
             command_torques = posori_task_torques + coriolis ;
+            // command_torques = posori_task_torques + joint_task_torques + coriolis ;
         }
         else if(state == CAM)
         {
-            Vector3d pose_from_camera = redis_client.getEigenMatrix(POSE_FROM_CAMERA_KEY);
-            // MatrixXd rot_from_camera = redis_client.getEigenMatrix(ROTATION_FROM_CAMERA_KEY);
+            // set the camera trigger key to 1.
+            redis_client.set(CAMERA_TRIGGER_KEY,"1");
+            usleep(1000000);
+            Vector3d pose_from_camera = redis_client.getEigenMatrixJSON(POSE_FROM_CAMERA_KEY);
+            MatrixXd rot_from_camera = redis_client.getEigenMatrixJSON(ROTATION_FROM_CAMERA_KEY);
+            cout << "Pose from camera: " << pose_from_camera<< "\n";
             // find transformation to base frame.
             Affine3d T;
             // robot->transform(T,"camera_link",pose_from_camera,rot_from_camera);
-            robot->transform(T,"camera_link",pose_from_camera);
+            robot->transform(T,"camera_link",pose_from_camera,rot_from_camera);
+            cout << "Rotation Matrix: " << T.rotation() << "\n";
+            MatrixXd rot_mat;
+             
             // compute trajectory.
-            generate_path(path,0.5,0.4,T);
+            generate_path(path,0.2,0.2,T);
+            robot_pos = path[0]; // set the robot_pos to the start of the trajectory.
+            // // for testing.
+            // robot_pos = T.translation() + Vector3d(0,0,0.02);
+            R_init = T.rotation();
+
+            // R_init = rot_from_camera;
             // set the state transition key to IDLE;
             redis_client.set(STATE_TRANSITION_KEY,"3");
+            // redis_client.set(CAMERA_TRIGGER_KEY,"0");
+            command_torques = coriolis;
         }
         else if (state == IDLE)
         {
-            command_torques = coriolis;
+            redis_client.set(CAMERA_TRIGGER_KEY,"0");
+            // posori_task->reInitializeTask();
+            // joint_task->reInitializeTask();
+            integrate_flag = 1;
+            // joint_task->_ki = 0;
+            // joint_task->_integrated_position_error.setZero();
+            joint_task->computeTorques(joint_task_torques);
+            command_torques = joint_task_torques + coriolis;
+            // command_torques = coriolis;
         }
         
 
@@ -315,12 +381,12 @@ int main(int argc, char const *argv[])
 }
 
 
-void generate_path(std::vector<Vector3d>path,double l, double w, Affine3d T)
+void generate_path(std::vector<Vector3d>& path,double l, double w, Affine3d T)
 {
     // clear the container.
     path.clear();
     // make the rectangle in local coordinate system starting from top left corner.
-    double offset = 0.05; // z axis offset for safety.
+    double offset = -0.05; // z axis offset for safety.
     MatrixXd corner_points(3,5);
     corner_points.col(0) = Vector3d(-l/2,w/2,offset);
     corner_points.col(1) = Vector3d(l/2,w/2,offset);
@@ -335,7 +401,7 @@ void generate_path(std::vector<Vector3d>path,double l, double w, Affine3d T)
         Vector3d xi = corner_points.col(i);
         Vector3d xe = corner_points.col(i+1);
         Vector3d diff = xe - xi;
-        cout<< "T: " << T.matrix() << "\n";
+        // cout<< "T: " << T.matrix() << "\n";
         for (int j = 0; j < n; j++)
         {
             Vector3d temp_var = xi + ((double)j/(double)n)* diff;
@@ -348,9 +414,9 @@ void generate_path(std::vector<Vector3d>path,double l, double w, Affine3d T)
     path.push_back(path[0]);
 
     // print all elements of vector.
-    cout << "printing the trajectory\n";
-    for (int i = 0; i < path.size(); i++)
-    {
-        cout << "\ni : " << i << "\n" << path[i] << "\n"; 
-    }
+    // cout << "printing the trajectory\n";
+    // for (int i = 0; i < path.size(); i++)
+    // {
+    //     cout << "\ni : " << i << "\n" << path[i] << "\n"; 
+    // }
 }
