@@ -1,3 +1,4 @@
+#define USE_OTG 1
 #include <iostream>
 #include <Sai2Model.h>
 #include <tasks/JointTask.h>
@@ -152,10 +153,10 @@ int main(int argc, char const *argv[])
     posori_task->_kv_ori = 10.8;
     posori_task->_ki_ori = 10.0;
 
-    posori_task->_e_max = 3e-2;
+    posori_task->_e_max = 3e-2; 
     posori_task->_e_min = 3e-3;
     posori_task->_linear_saturation_velocity = 0.1;
-
+    
     // state handling.
     int state = INIT;
 

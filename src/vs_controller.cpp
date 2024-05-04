@@ -133,8 +133,8 @@ int main(int argc, char const *argv[])
     posori_task->_e_max = 3e-2;
     posori_task->_e_min = 3e-3;
 
-    // posori_task->_use_velocity_saturation_flag = true;
-    // posori_task->_linear_saturation_velocity = 0.1;
+    posori_task->_use_velocity_saturation_flag = true;
+    posori_task->_linear_saturation_velocity = 0.02;
 
     // update task hierarchy.
     N_prec.setIdentity(dof,dof);
@@ -239,61 +239,80 @@ int main(int argc, char const *argv[])
         else if (state == VS)
         {
             // get Rotation between end_effector frame and camera frame.
-            double angle;
-            Vector3d x_new,dir_vector;
-            Affine3d T_EE, T_CAM;
-            Matrix3d R_CAM_EE;
-            int object_in_frame;
-            robot->transform(T_CAM,"camera_link",Vector3d(0,0,0));
-            robot->transform(T_EE,control_link_name,Vector3d(0,0,0));
-            // cout << "Translation: " << (T_EE.inverse()*T_CAM).translation() << "\n";
-            R_CAM_EE = (T_EE.inverse()*T_CAM).rotation();
-            R_CAM_EE = T_EE.rotation().transpose()* T_CAM.rotation();
+            double angle,step_size = 0.05;
+            Affine3d T_EE;
+            Vector3d x_new = Vector3d(0,0,0);
+            Vector3d dir_vector,unnormalized_dir_vector;
+            int object_in_frame = -1;
             
-
             // x_new as the current position.
 
             if (redis_client.get(CAMERA_TRIGGER_KEY) == "1")
             {
-                dir_vector = redis_client.getEigenMatrixJSON(DIRECTION_KEY);
-                cout << "dir_vector : " << dir_vector << "\t" << "Modified dir vector : " << R_CAM_EE*dir_vector << "\n";
-                x_new = 0.01*R_CAM_EE*dir_vector + posori_task->_current_position;
-                cout << "x_curr: " << posori_task->_current_position << "\n";
-                cout << "x_new : " << x_new << "\n";
-                cout << "___________________\n";
+                unnormalized_dir_vector = redis_client.getEigenMatrixJSON(DIRECTION_KEY);
+                dir_vector = unnormalized_dir_vector.normalized();
                 angle = stod(redis_client.get(ANGLE_KEY));
                 object_in_frame = stoi(redis_client.get(OBJECT_IN_FRAME_KEY));
                 redis_client.set(CAMERA_TRIGGER_KEY,"0");
+
+                
             }
 
             if (object_in_frame == 0)
             {
                 cout << "Object out of frame. Switching to IDLE state.\n";
                 redis_client.set(STATE_TRANSITION_KEY,"1");
+                continue;
             }
             
-            // set controller parameter and compute torques.
+            // set end-effector target.
 
-            // if (dir_vector.norm() >= 30)
-            // {
-            //     posori_task->_desired_position = x_new;
-            //     posori_task->computeTorques(posori_task_torques);
-            //     joint_task->updateTaskModel(posori_task->_N);
-            //     joint_task->computeTorques(joint_task_torques);
-            //     command_torques = posori_task_torques + joint_task_torques + coriolis;
-            // }
-            // else 
-            // {   
-            //     posori_task->_desired_position = posori_task->_current_position;
-            //     joint_task->updateTaskModel(posori_task->_N);
-            //     joint_task->computeTorques(joint_task_torques);
-            //     command_torques = posori_task_torques + joint_task_torques + coriolis;
-            //     posori_task->computeTorques(posori_task_torques);
-            // }
+            if (dir_vector(1) <= 0){
+                x_new = x_new + Vector3d(step_size*abs(dir_vector(1)),0,0);
+            }
+            else {
+                x_new = x_new + Vector3d(-step_size*abs(dir_vector(1)),0,0);
+            }
+
+            if (dir_vector(0) <= 0){
+                x_new = x_new + Vector3d(0,-step_size*abs(dir_vector(0)),0);
+            }
+            else {
+                x_new = x_new + Vector3d(0,step_size*abs(dir_vector(0)),0);
+            }
+            // tranform x_new in base frame.
+            robot->transform(T_EE,control_link_name,pos_in_ee_link);
+            cout << "direction vector : " << unnormalized_dir_vector << "\n";
+            cout << "x_new without transformation : " << x_new <<"\n";
+            cout << "x_curr: " << posori_task->_current_position <<"\n";
+            robot->transform(T_EE,control_link_name,x_new);
+            x_new = T_EE.translation();
+            cout << "x_new: " << x_new <<"\n";
+            cout << "===========================\n";
+            // set controller parameter and compute torques.
+            
+            if (unnormalized_dir_vector.norm() >= 30)
+            {
+                cout << "norm more than 30\n";
+                posori_task->_desired_position = x_new;
+                posori_task->computeTorques(posori_task_torques);
+                joint_task->updateTaskModel(posori_task->_N);
+                joint_task->computeTorques(joint_task_torques);
+                command_torques = posori_task_torques + joint_task_torques + coriolis;
+            }
+            else 
+            {   
+                cout << "norm less than 30\n";
+                posori_task->_desired_position = posori_task->_current_position;
+                joint_task->updateTaskModel((MatrixXd::Identity(dof,dof)));
+                joint_task->computeTorques(joint_task_torques);
+                posori_task->computeTorques(posori_task_torques);
+                command_torques = posori_task_torques + joint_task_torques + coriolis;
+            }
           
-            joint_task->updateTaskModel((MatrixXd::Identity(dof,dof)));
-            joint_task->computeTorques(joint_task_torques);
-            command_torques = joint_task_torques + coriolis;
+            // joint_task->updateTaskModel((MatrixXd::Identity(dof,dof)));
+            // joint_task->computeTorques(joint_task_torques);
+            // command_torques = joint_task_torques + coriolis;
         }
 
 
