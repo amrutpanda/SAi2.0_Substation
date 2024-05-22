@@ -157,10 +157,63 @@
         </geometry>
       </collision>      
     </link>
+    
     <joint name="joint_fixed" type="fixed">
       <origin rpy="0 0 0" xyz="0.075 0.18 0.09"/>
       <parent link="link7"/>
       <child link="end_effector"/>
+    </joint>
+    
+      <link name="eef_2">
+      <inertial>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+<!--        <mass value="0.5" />--> original value
+        <mass value="0.001" />
+        <inertia ixx="0.05" iyy="0.05" izz="0.05" ixy="0" ixz="0" iyz="0" />
+      </inertial>
+      <visual>
+        <geometry>
+          <sphere radius="0.01"/>
+        </geometry>
+        <material name="material_ee">
+            <color rgba="0.5 1 1 1.0" />
+        </material>
+      </visual>
+      <collision>
+        <geometry>
+          <sphere radius="0.01"/>
+        </geometry>
+      </collision>      
+    </link>
+    
+     <joint name="joint_fixed_eef2" type="fixed">
+      <origin rpy="0 0 -0.78539816339" xyz="0.0 0.0 0.12"/>
+      <parent link="link7"/>
+      <child link="eef_2"/>
+    </joint>
+    
+    <link name="camera_link">
+      <inertial>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <mass value="0.1" />
+        <inertia ixx="0.05" iyy="0.05" izz="0.05" ixy="0" ixz="0" iyz="0" />
+      </inertial>
+      <visual>
+        <geometry>
+          <mesh filename="../../../model/panda/meshes/realsense_d455/realsense1.obj"/>
+        </geometry>
+      </visual>
+      <collision>
+        <geometry>
+          <sphere radius="0.01"/>
+        </geometry>
+      </collision>      
+    </link>
+    
+    <joint name="joint_camera" type="fixed">
+      <origin rpy="-1.57 0.0 -0.7853" xyz="0.0 0.0 0.21 "/>
+      <parent link="eef_2"/>
+      <child link="camera_link"/>
     </joint>
 
 

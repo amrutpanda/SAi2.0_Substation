@@ -1,15 +1,16 @@
-/*
-	@author Amrut Panda
-	year : 2024
-*/
 
+#define USING_OTG 1
 #include "Sai2Model.h"
-#include "Sai2Graphics.h"
 #include "Sai2Simulation.h"
-#include <dynamics3d.h>
+#include "Sai2Graphics.h"
 #include "redis/RedisClient.h"
 #include "timer/LoopTimer.h"
+#include "tasks/JointTask.h"
+#include "tasks/PosOriTask.h"
 #include "force_sensor/ForceSensorSim.h"
+#include "filters/ButterworthFilter.h"
+#include "perception/ForceSpaceParticleFilter.h"
+// #include "redis_keys.h"
 
 #include <GLFW/glfw3.h> //must be loaded after loading opengl/glew
 
@@ -17,60 +18,7 @@
 #include <string>
 #include <random>
 #include <queue>
-#include <chai3d.h>
-#include <signal.h>
 
-// create a point object.
-
-class Point
-{
-private:
-
-public:
-	chai3d::cGenericObject* point_object = new chai3d::cGenericObject();
-	Point(double radius);
-	chai3d::cGenericObject* setAsChild();
-	void setPos(Vector3d a_pos);
-	void setPos(Vector3d &a_pos);
-	void setRot(Matrix3d a_rot);
-	void setRot(Matrix3d &a_rot);
-	~Point();
-};
-
-Point::Point(double radius)
-{
-	// setting up the mesh.
-	auto tmp_mesh = new chai3d::cMesh();
-	// create chai sphere mesh.
-	chai3d::cCreateSphere(tmp_mesh,radius);
-	tmp_mesh->setLocalPos(Vector3d(0.0,0.0,0));
-	tmp_mesh->m_material->setColorf(0.5,0,2,0.2);
-	tmp_mesh->setShowFrame(true);
-	tmp_mesh->setFrameSize(0.1);
-	point_object->addChild(tmp_mesh);
-}
-
-void Point::setPos(Vector3d a_pos)
-{
-	point_object->setLocalPos(a_pos);
-}
-
-void Point::setPos(Vector3d &a_pos)
-{
-	point_object->setLocalPos(a_pos);
-}
-
-chai3d::cGenericObject* Point::setAsChild()
-{
-	return point_object;
-}
-
-Point::~Point()
-{
-	delete point_object;
-}
-
-//main code starts from here.
 
 bool fSimulationRunning = false;
 void sighandler(int){fSimulationRunning = false;}
@@ -79,8 +27,9 @@ using namespace std;
 using namespace Eigen;
 using namespace chai3d;
 
-const string world_file = "./resources/world.urdf";
-const string robot_file = "./resources/panda_arm.urdf";
+
+const string world_file = "./dual_proxy_motion_robot/resources/world.urdf";
+const string robot_file = "./dual_proxy_motion_robot/resources/panda_arm.urdf";
 // const string robot_file = "./resources/iiwa14.urdf";
 const string robot_name = "panda";
 // const string robot_name = "iiwa14";
@@ -89,10 +38,17 @@ const string camera_name = "camera";
 const string link_name = "link7";
 
 // redis keys:
-string JOINT_ANGLES_KEY = "sai2::FrankaPanda::Clyde::sensors::q";
-string JOINT_VELOCITIES_KEY = "sai2::FrankaPanda::Clyde::sensors::dq";
+const string CONTROLLER_RUNNING_KEY = "sai2::substation::simviz::controller_running_key";
+string JOINT_ANGLES_KEY = "sai2::substation::simviz::sensors::q";
+string JOINT_VELOCITIES_KEY = "sai2::substation::simviz::sensors::dq";
+string ROBOT_COMMAND_TORQUES_KEY = "sai2::substation::simviz::actuators::tau_cmd";
+
+string ROBOT_SENSED_FORCE_KEY = "sai2::substation::simviz::sensors::sensed_force";
 
 RedisClient redis_client;
+
+// simulation function prototype
+void simulation(Sai2Model::Sai2Model* robot, Simulation::Sai2Simulation* sim, ForceSensorSim* force_sensor);
 
 // callback to print glfw errors
 void glfwError(int error, const char* description);
@@ -102,7 +58,6 @@ void keySelect(GLFWwindow* window, int key, int scancode, int action, int mods);
 
 // callback when a mouse button is pressed
 void mouseClick(GLFWwindow* window, int button, int action, int mods);
-
 
 // flags for scene camera movement
 bool fTransXp = false;
@@ -116,8 +71,9 @@ bool fRotPanTilt = false;
 // flag for enabling/disabling remote task
 bool fOnOffRemote = false;
 
-int main() {
-	cout << "Loading URDF world model file: " << world_file << endl;
+int main()
+{
+    cout << "Loading URDF world model file: " << world_file << endl;
 
 	// start redis client
 	redis_client = RedisClient();
@@ -137,8 +93,32 @@ int main() {
 	Affine3d T_workd_robot = Affine3d::Identity();
 	T_workd_robot.translation() = Vector3d(0, 0, 0);
 	auto robot = new Sai2Model::Sai2Model(robot_file, false, T_workd_robot);
-    robot->_q = redis_client.getEigenMatrixJSON(JOINT_ANGLES_KEY);    
+	VectorXd q_init(7);
+	// q_init << 0, 18, 0, -70, 0, 90, -90;  // changed last joint from 0 to -90
+	// q_init << 0, 18, 0, -70, 0, 90, -71 * 0;
+	// q_init *= M_PI/180.0;
+	// q_init << 1.55686,-0.448781,-0.0481126,-2.12039,0.019258,1.66288,-0.0841794;
+	q_init << 1.37264,1.218,-1.7873,-2.27297,-1.99631,1.51095,0;
+	robot->_q = q_init;
 	robot->updateModel();
+
+	// load simulation world
+	auto sim = new Simulation::Sai2Simulation(world_file, false);
+	sim->setCollisionRestitution(0);
+	sim->setCoeffFrictionStatic(0.0);
+
+	// read joint positions, velocities, update model
+	sim->setJointPositions(robot_name, robot->_q);
+	sim->setJointVelocities(robot_name, robot->_dq);
+	
+
+	// Add force sensor to the end-effector
+	Affine3d sensor_transform_in_link = Affine3d::Identity();
+	const Vector3d sensor_pos_in_link = Eigen::Vector3d(0.0,0.0,0.0);
+	const Vector3d pos_in_link = Vector3d(0.0,0.0,0.0);
+	sensor_transform_in_link.translation() = sensor_pos_in_link;
+	auto force_sensor = new ForceSensorSim(robot_name, link_name, sensor_transform_in_link, robot);
+	force_sensor->enableFilter(0.01);
 
 	/*------- Set up visualization -------*/
 	// set up error callback
@@ -161,7 +141,7 @@ int main() {
 
 	// create window and make it current
 	glfwWindowHint(GLFW_VISIBLE, 0);
-	GLFWwindow* window = glfwCreateWindow(windowW, windowH, "Clyde", NULL, NULL);
+	GLFWwindow* window = glfwCreateWindow(windowW, windowH, "Simulation Visualization", NULL, NULL);
 	glfwSetWindowPos(window, windowPosX, windowPosY);
 	glfwShowWindow(window);
 	glfwMakeContextCurrent(window);
@@ -171,31 +151,25 @@ int main() {
 	glfwSetKeyCallback(window, keySelect);
 	glfwSetMouseButtonCallback(window, mouseClick);
 
-	// create the point object.
-	Point sphere(0.02);
-	double var = 0.0001;
 	// cache variables
 	double last_cursorx, last_cursory;
 
 	fSimulationRunning = true;
+	thread sim_thread(simulation, robot, sim, force_sensor);
 
-	// while window is open:
+    // while window is open:
 	while (!glfwWindowShouldClose(window) && fSimulationRunning)
 	{
-		var = var + 0.01;
 		// update graphics. this automatically waits for the correct amount of time
 		int width, height;
 		glfwGetFramebufferSize(window, &width, &height);
-        robot->_q = redis_client.getEigenMatrixJSON(JOINT_ANGLES_KEY);
-        robot->updateModel();
 		graphics->updateGraphics(robot_name, robot);
-		graphics->showLinkFrame(1,robot_name);
-		sphere.setPos(Vector3d(0.2*cos(var),0.2*sin(var),0));
-		graphics->_world->addChild(sphere.setAsChild());
+        graphics->showLinkFrame(1,robot_name);
 		graphics->render(camera_name, width, height);
 
 		// swap buffers
 		glfwSwapBuffers(window);
+
 		// wait until all GL commands are completed
 		glFinish();
 
@@ -271,14 +245,86 @@ int main() {
 
 	// stop simulation
 	fSimulationRunning = false;
+	sim_thread.join();
 
 	// destroy context
 	glfwDestroyWindow(window);
 
 	// terminate
 	glfwTerminate();
+    return 0;
+}
 
-	return 0;
+
+
+// ------------------------------------------------------------------------------ //
+void simulation(Sai2Model::Sai2Model* robot, Simulation::Sai2Simulation* sim, ForceSensorSim* force_sensor) {
+
+	int dof = robot->dof();
+	VectorXd command_torques = VectorXd::Zero(dof);
+	redis_client.setEigenMatrixJSON(ROBOT_COMMAND_TORQUES_KEY, command_torques);
+
+	// for testing.
+	// command_torques << 1.0,0.0,0.0,0.0,0.0,0.0,0.0;
+
+	// sensed force
+	Vector3d sensed_force = Vector3d::Zero();
+	Vector3d sensed_moment = Vector3d::Zero();
+	VectorXd sensed_force_moment = VectorXd::Zero(6);
+
+	// redis communication
+	redis_client.createReadCallback(0);
+	redis_client.addEigenToReadCallback(0, ROBOT_COMMAND_TORQUES_KEY, command_torques);
+
+	redis_client.createWriteCallback(0);
+	redis_client.addEigenToWriteCallback(0, JOINT_ANGLES_KEY, robot->_q);
+	redis_client.addEigenToWriteCallback(0, JOINT_VELOCITIES_KEY, robot->_dq);
+	redis_client.addEigenToWriteCallback(0, ROBOT_SENSED_FORCE_KEY, sensed_force_moment);
+
+
+	// create a timer
+	double sim_frequency = 2000.0;
+	LoopTimer timer;
+	timer.initializeTimer();
+	timer.setLoopFrequency(sim_frequency);
+	double last_time = timer.elapsedTime(); //secs
+	bool fTimerDidSleep = true;
+
+	unsigned long long simulation_counter = 0;
+
+	while (fSimulationRunning) {
+		fTimerDidSleep = timer.waitForNextLoop();
+
+		// particle pos from controller
+		redis_client.executeReadCallback(0);
+		// for testing purpose. should be commented while actual controller is being run.
+		// command_torques << 001.0,0.0,0.0,0.0,0.0,0.0,0.0;
+
+		sim->setJointTorques(robot_name, command_torques);
+		// integrate forward
+		sim->integrate(1.0/sim_frequency);
+
+		// read joint positions, velocities, update model
+		sim->getJointPositions(robot_name, robot->_q);
+		sim->getJointVelocities(robot_name, robot->_dq);
+		robot->updateKinematics();
+
+		// // read end-effector task forces from the force sensor simulation
+		force_sensor->update(sim);
+		force_sensor->getForceLocalFrame(sensed_force);
+		force_sensor->getMomentLocalFrame(sensed_moment);
+		sensed_force_moment << -sensed_force, -sensed_moment;
+		
+		redis_client.executeWriteCallback(0);
+
+		simulation_counter++;
+	}
+
+	double end_time = timer.elapsedTime();
+	std::cout << "\n";
+	std::cout << "Simulation Loop run time  : " << end_time << " seconds\n";
+	std::cout << "Simulation Loop updates   : " << timer.elapsedCycles() << "\n";
+	std::cout << "Simulation Loop frequency : " << timer.elapsedCycles()/end_time << "Hz\n";
 }
 
 //------------------------------------------------------------------------------

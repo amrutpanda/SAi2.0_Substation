@@ -26,9 +26,11 @@ enum State {
 	CLEANING,
 	CLEANING_EXIT_TRANSITION,
 	RECENTER,
+	VS,
+	IDLE,
 	TOTAL_STATES
 };
-const vector<string> state_names {"Init", "Free", "Orientation", "Cleaning", "Cleaning Exit", "Recentering"};
+const vector<string> state_names {"Init", "Free", "Orientation", "Cleaning", "Cleaning Exit", "Recentering","vs","idle"};
 
 #include <signal.h>
 bool runloop = false;
@@ -229,13 +231,11 @@ int main(int argc, char* argv[]) {
 		// wait for next scheduled loop
 		timer.waitForNextLoop();
 		current_time = timer.elapsedTime() - start_time;
-
 		// push forward before reading redis 
 		prev_state = state;
 
 		// read haptic state and robot state
 		redis_client_local.executeReadCallback(0);
-
 		teleop_task->UseGripperAsSwitch();
 		gripper_state_prev = gripper_state;
 		gripper_state = teleop_task->gripper_state;
@@ -411,6 +411,64 @@ int main(int argc, char* argv[]) {
 			// remember values 
 			prev_desired_force = desired_force;
 
+		} else if (state == VS) {
+			if (!teleop_task->device_homed ) {
+				teleop_task->HomingTask();
+
+			// if(controller_counter > 3000 && gripper_state) {
+				// teleop_task->device_homed = true;
+
+				// teleop_task->setRobotCenter(haptic_proxy, robot_rotation_default);
+				teleop_task->setDeviceCenter(teleop_task->_current_position_device, teleop_task->_current_rotation_device);
+				device_rot_center = teleop_task->_current_rotation_device;
+				device_pos_center = teleop_task->_current_position_device;
+				
+				teleop_task->setRobotCenter(robot_pos, robot_rot);
+				device_release_rot.setIdentity();
+				// Reinitialize controllers
+				teleop_task->reInitializeTask();
+				if (gripper_state) {
+					teleop_task->computeHapticCommands6d(robot_proxy,robot_proxy_rot);
+				}
+				else {
+					teleop_task->computeHapticCommands3d(robot_proxy);
+				}
+
+				// state = IDLE;  // state transition handled by the robot 
+			}
+			else {
+				// state = IDLE;
+				// teleop_task->computeHapticCommands6d(robot_proxy,robot_proxy_rot);
+			}
+
+		} else if (state == IDLE) {
+			teleop_task->HomingTask();
+			if (teleop_task->device_homed) {
+
+			// if(controller_counter > 3000 && gripper_state) {
+				// teleop_task->device_homed = true;
+
+				// teleop_task->setRobotCenter(haptic_proxy, robot_rotation_default);
+				teleop_task->setDeviceCenter(teleop_task->_current_position_device, teleop_task->_current_rotation_device);
+				device_rot_center = teleop_task->_current_rotation_device;
+				device_pos_center = teleop_task->_current_position_device;
+
+				teleop_task->setRobotCenter(robot_pos, robot_rot);
+				device_release_rot.setIdentity();
+				// Reinitialize controllers
+				teleop_task->reInitializeTask();
+				if (gripper_state) {
+					teleop_task->computeHapticCommands6d(robot_proxy,robot_proxy_rot);
+				}
+				else {
+					teleop_task->computeHapticCommands3d(robot_proxy);
+				}
+
+				// state = FREE;  // state transition handled by the robot 
+			}
+			else {
+				teleop_task->computeHapticCommands6d(robot_proxy,robot_proxy_rot);
+			}
 		}
 
 		// write control torques

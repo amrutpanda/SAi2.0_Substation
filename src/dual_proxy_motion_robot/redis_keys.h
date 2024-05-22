@@ -40,3 +40,11 @@ string ROBOT_CLEANING_HAPTIC_ENABLE_KEY = "sai2::HapticApplications::01::haptic_
 string CONTROLLER_RUNNING_KEY = "sai2::HapticApplications::01::dual_proxy::controller_running";
 string ROBOT_EE_FORCE_KEY = "sai2::HapticApplications::01::dual_proxy::ee_force";
 string ROBOT_READY_STATE_KEY = "sai2::HapticApplications::01::robot_ready";
+
+// By amrut for ASME paper.
+std::string POSE_FROM_CAMERA_KEY = "sai2::substation::camera::pose";
+std::string ROTATION_FROM_CAMERA_KEY = "sai2::substation::camera::rotation";
+std::string CAMERA_TRIGGER_KEY = "sai2::substation::camera::trigger";
+std::string DIRECTION_KEY = "sai2::substation::camera::direction";
+std::string ANGLE_KEY = "sai2::substation::camera::angle";
+std::string OBJECT_IN_FRAME_KEY = "sai2::substation::camera::object_in_frame";

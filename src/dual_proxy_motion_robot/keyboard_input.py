@@ -30,17 +30,23 @@ key_actions = {
         r.set(ROBOT_STATE_REQUESTED_KEY, "5")
     ),
     "6": lambda: (
-        print("State 6 requested"),
+        print("State 6(visual servoing) requested"),
         r.set(ROBOT_STATE_REQUESTED_KEY, "6")
     ),
     "7": lambda: (
-        print("State 7 requested"),
+        print("State 7 requested(Idle)"),
         r.set(ROBOT_STATE_REQUESTED_KEY, "7")
     ),
     "8": lambda: (
         print("State 8 requested"),
         r.set(ROBOT_STATE_REQUESTED_KEY, "8")
     ),
+
+    ## for visual servoing.
+    # "m": lambda: (
+    #     print("State 'm(visual servoing state)' requested"),
+    #     r.set(ROBOT_STATE_REQUESTED_KEY, "8")
+    # ),
     "p": lambda: (
         print("State change accepted"),
         r.set(ROBOT_STATE_TRANSITION_KEY, "1")

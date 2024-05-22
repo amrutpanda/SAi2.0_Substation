@@ -16,7 +16,7 @@
 	- Cleaning: fixed position and orientation, send rotation commands through rotary encoder to clean 
 	- Recenter: recenters the haptic workspace based on the robot's current position 
 */
-
+#define USING_OTG 1
 #include "Sai2Model.h"
 #include "redis/RedisClient.h"
 #include "timer/LoopTimer.h"
@@ -38,9 +38,11 @@ enum State {
 	CLEANING,
 	CLEANING_EXIT_TRANSITION,
 	RECENTER,
+	VS,
+	IDLE,
 	TOTAL_STATES
 };
-const vector<string> state_names {"Init", "Free", "Orientation", "Cleaning", "Cleaning Exit", "Recentering"};
+const vector<string> state_names {"Init", "Free", "Orientation", "Cleaning", "Cleaning Exit", "Recentering","vs","idle"};
 
 #include <signal.h>
 bool runloop = false;
@@ -164,6 +166,7 @@ int main() {
 	joint_task->_use_interpolation_flag = false;
 	joint_task->_use_velocity_saturation_flag = true;
 	joint_task->_saturation_velocity.array() = 35 * (M_PI / 180);
+	// joint_task->_saturation_velocity << 35*(M_PI/180);
 
 	joint_task->_kp = 300.0;
 	joint_task->_kv = 15.0;
@@ -178,7 +181,8 @@ int main() {
 	// q_init << 0.0509167,-0.683943,-0.178354,-2.33097,-0.153555,1.76067,0;
 	// q_init << 0,-0.895205,-0.188536,-2.25996,-0.0967708,1.34953,0;
 	// q_init << -2.05761,-1.04975,1.35334,-2.34941,-2.11049,1.35565,0;
-	q_init << 1.63374,1.10276,-2.06883,-2.59503,-2.254,1.36884,0;
+	q_init << 1.63374,1.10276,-2.06883,-2.59503,-2.254,1.36884,0; // SET BY WILLIAM.
+	q_init << -0.390553,-1.34995,0.758122,-2.49509,-2.29837,1.86602,-1.06781; // SET BY AMRUT.
 	joint_task->_desired_position = q_init;
 
 	// posori task
@@ -190,7 +194,7 @@ int main() {
 	redis_client.setEigenMatrixJSON(HAPTIC_PROXY_KEY, x_init);
 
 	// compute expected default rotation to send to haptic
-	robot->_q = q_init;
+	robot->_q = q_init; 
 	robot->updateModel();
 	Matrix3d R_default = Matrix3d::Identity();
 	Vector3d pos_default = Vector3d::Zero();
@@ -217,6 +221,35 @@ int main() {
 	posori_task->_e_min = 3e-3;
 	// posori_task->_e_max = 1e-2;
 	// posori_task->_e_min = 1e-3;
+
+	// create a new posori_task object for visual servoing purpose.
+	auto posori2_task = new Sai2Primitives::PosOriTask(robot,"eef_2",Vector3d(0,0,0));
+	posori2_task->_use_interpolation_flag = true;
+	posori2_task->_use_velocity_saturation_flag = true;
+	posori2_task->_linear_saturation_velocity = 0.2;
+
+	posori2_task->_kp_pos = 400.0;
+	posori2_task->_kv_pos = 15.0;
+	posori2_task->_kp_ori = 400.0;
+	posori2_task->_kv_ori = 15.0;
+
+	posori2_task->_e_max = 3e-2;
+	posori2_task->_e_min = 3e-3;
+
+	VectorXd posori2_task_torques = VectorXd::Zero(dof);
+
+	posori2_task->updateTaskModel((MatrixXd::Identity(dof,dof)));
+
+	// set visual servoing variables.
+    Affine3d T;
+    bool positon_reached = false;
+    bool first_time_set = true;
+    bool angle_reached = false;
+	bool first_vs_loop = true;
+	Matrix3d M; // mapping matrix.
+	M << 0.707, 0, 0.707,
+			-0.707, 0, 0.707,
+			0,  -1, 0;
 
 	// rotation inputs from the keyboard 
 	int rot_direction = 0;
@@ -369,6 +402,18 @@ int main() {
 		prev_state = state;
 		prev_rot_direction = rot_direction;
 
+		// some calculation.
+		// Matrix3d m_rot;
+		// m_rot = AngleAxisd(0,Vector3d::UnitX())* AngleAxisd(0,Vector3d::UnitY()) * AngleAxisd(0.7,Vector3d::UnitZ());
+		// Affine3d T_ee,T_cam, T_eef_2;
+		// robot->transform(T_eef_2,"eef_2",Vector3d(0,1,0),M*m_rot);
+		// // robot->transform(T_ee,"end_effector");
+		// robot->transform(T_cam,"camera_link",Vector3d(2,0,0),m_rot);
+		// // cout << "T_eef_2_to_cam: \n" << (T_eef_2.rotation().transpose() * T_cam.rotation())<< "\n";
+		// cout << "R_ee : \n" << T_eef_2.rotation() << endl << "R_cam : \n" << T_cam.rotation() << endl;
+		// cout << "Angles: = \n" << (M).eulerAngles(2,1,0)*(180/M_PI) << "\n";
+		// exit(0);
+
 		// read haptic state and robot state
 		redis_client.executeReadCallback(0);
 		if (flag_simulation) {
@@ -484,6 +529,7 @@ int main() {
 					joint_task->_ki = 0.0;
 					joint_task->_use_velocity_saturation_flag = false;
 
+					// state = FREE;
 					state = FREE;
 				}
 			}
@@ -670,6 +716,139 @@ int main() {
 			}
 			joint_task->computeTorques(joint_task_torques);
 			command_torques = posori_task_torques + joint_task_torques + coriolis;
+		}
+
+		else if (state == VS) {	
+			if (first_vs_loop) {
+				posori2_task->reInitializeTask();
+				first_vs_loop = false;
+			}
+			 // get Rotation between end_effector frame and camera frame.
+            double angle,step_size = 0.1;
+            Affine3d T_EE;
+            Vector3d x_new = Vector3d(0,0,0);
+            Vector3d dir_vector,unnormalized_dir_vector;
+            int object_in_frame = -1;
+			if (redis_client.get(CAMERA_TRIGGER_KEY) == "1") {
+                unnormalized_dir_vector = redis_client.getEigenMatrixJSON(DIRECTION_KEY);
+                dir_vector = unnormalized_dir_vector.normalized();
+                angle = stod(redis_client.get(ANGLE_KEY));
+                object_in_frame = stoi(redis_client.get(OBJECT_IN_FRAME_KEY));
+                redis_client.set(CAMERA_TRIGGER_KEY,"0" );
+                if (object_in_frame == 0) {
+                    cout << "Object out of frame. Switching to IDLE state.\n";
+                    joint_task->reInitializeTask();
+					// set robot is ready.
+					robot_ready = 1;
+					state = IDLE;
+                    continue;
+                }
+
+                x_new = step_size*M*dir_vector;
+                robot->transform(T_EE,"eef_2",x_new);
+                posori2_task->_desired_position = T_EE.translation();
+                // check has whether the position is reached or not.
+                if (dir_vector.norm() <= 0.001){
+                    positon_reached = true;
+                }
+            }
+
+			if (positon_reached && !angle_reached) {
+                if (abs(angle) <= 0.1) {
+                    joint_task->reInitializeTask();
+
+                    // cout << "Angle is aligned.\n";
+                    joint_task->updateTaskModel((MatrixXd::Identity(dof,dof)));
+                    joint_task->computeTorques(joint_task_torques);
+                    command_torques = joint_task_torques + coriolis;
+                    angle_reached = true;
+                    
+                }
+                else {
+					Matrix3d R_cam;
+					R_cam = AngleAxisd(0,Vector3d::UnitX())* AngleAxisd(0,Vector3d::UnitY()) * AngleAxisd(0,Vector3d::UnitZ());
+					robot->transform(T_EE,"eef_2",Vector3d(0,0,0),M*R_cam);
+					// posori2_task->_desired_position = x_new;
+					posori2_task->_desired_orientation = T_EE.rotation();
+					joint_task->updateTaskModel(posori2_task->_N);
+					joint_task->computeTorques(joint_task_torques);
+					posori2_task->computeTorques(posori2_task_torques);
+					command_torques = posori2_task_torques + joint_task_torques + coriolis;
+
+
+                    // joint_task->reInitializeTask();
+                    // joint_task->_use_velocity_saturation_flag = true;
+                    // joint_task->_saturation_velocity << M_PI/6,M_PI/6,M_PI/6,M_PI/4,M_PI/3,M_PI/3,M_PI/8;
+
+                    // VectorXd joint_position = robot->_q;
+                    // joint_position(6) = joint_position(6) + angle;
+                    // joint_task->updateTaskModel((MatrixXd::Identity(dof,dof)));
+                    // joint_task->_desired_position = joint_position;
+                    // joint_task->computeTorques(joint_task_torques);
+                    // command_torques = joint_task_torques + coriolis;
+                }
+                // joint_task->reInitializeTask();
+                // redis_client.set(STATE_TRANSITION_KEY,"1");
+                // cout << "Switching to IDLE state as angle is aligned.\n";
+                // continue;
+            }
+            else {
+                joint_task->updateTaskModel(posori2_task->_N);
+                joint_task->computeTorques(joint_task_torques);
+                posori2_task->computeTorques(posori2_task_torques);
+                command_torques = posori2_task_torques + coriolis;
+            }
+
+			// joint_task->updateTaskModel((MatrixXd::Identity(dof,dof)));
+            // joint_task->computeTorques(joint_task_torques);
+            // command_torques = joint_task_torques + coriolis;
+
+			if (angle_reached) {
+                if (first_time_set) {    
+                    Vector3d pos = redis_client.getEigenMatrixJSON(POSE_FROM_CAMERA_KEY);
+                    robot->transform(T,"eef_2",pos);
+                    first_time_set = false;
+                    cout << "Target set\n";
+                }
+                posori2_task->_desired_position = T.translation();
+                posori2_task->_desired_orientation = T.rotation();
+
+                if ((posori2_task->_desired_position - posori2_task->_current_position).norm() < 0.01) {
+					state = IDLE;
+					redis_client.set(ROBOT_STATE_KEY, to_string(state));
+                    cout << "Reached position. Switching to FREE state.\n";
+                    // reset the flags to original.
+                    positon_reached = false;
+                    angle_reached = false;
+                    first_time_set = true;
+					first_vs_loop = true;
+					robot_ready = 1;
+					// set the control torque.
+					// joint_task->updateTaskModel(posori2_task->_N);
+					// joint_task->computeTorques(joint_task_torques);
+					// posori2_task->computeTorques(posori2_task_torques);
+					// command_torques = posori2_task_torques + joint_task_torques + coriolis;
+					// reInitialize the controllers.
+					joint_task->reInitializeTask();
+                    continue;
+                }
+                joint_task->updateTaskModel(posori2_task->_N);
+                joint_task->computeTorques(joint_task_torques);
+                posori2_task->computeTorques(posori2_task_torques);
+                command_torques = posori2_task_torques + joint_task_torques + coriolis;
+
+                // joint_task->updateTaskModel((MatrixXd::Identity(dof,dof)));
+                // joint_task->computeTorques(joint_task_torques);
+                // command_torques = joint_task_torques + coriolis;
+            } 
+
+		} else if (state == IDLE) {
+				// joint_task->_use_velocity_saturation_flag = true;
+                // joint_task->_saturation_velocity << M_PI/6,M_PI/6,M_PI/6,M_PI/4,M_PI/4,M_PI/4,M_PI/8;
+				// joint_task->_desired_position << -0.390553+0.02,-1.34995+0.02,0.758122-0.02,-2.49509,-2.29837,1.86602,-1.06781;
+				joint_task->updateTaskModel((MatrixXd::Identity(dof,dof)));
+				joint_task->computeTorques(joint_task_torques);
+				command_torques = joint_task_torques + coriolis;
 		}
 
 		// write control torques and dual proxy variables

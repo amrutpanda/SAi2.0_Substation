@@ -24,6 +24,12 @@ target_link_libraries(getTransform ${SUBSTATION_COMMON_LIBRARIES})
 add_executable(camera_calibration_test camera_calibration_test.cpp)
 target_link_libraries(camera_calibration_test ${SUBSTATION_COMMON_LIBRARIES})
 
+add_executable(simulation simulation.cpp)
+target_link_libraries(simulation ${SUBSTATION_COMMON_LIBRARIES})
+
+add_executable(sim_controller sim_controller.cpp)
+target_link_libraries(sim_controller ${SUBSTATION_COMMON_LIBRARIES})
+
 # for visual servoing teleoperation application.
 
 add_executable(vs_controller vs_controller.cpp)
