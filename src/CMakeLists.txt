@@ -27,8 +27,8 @@ target_link_libraries(camera_calibration_test ${SUBSTATION_COMMON_LIBRARIES})
 add_executable(simulation simulation.cpp)
 target_link_libraries(simulation ${SUBSTATION_COMMON_LIBRARIES})
 
-add_executable(sim_controller sim_controller.cpp)
-target_link_libraries(sim_controller ${SUBSTATION_COMMON_LIBRARIES})
+add_executable(sim_robot_controller sim_robot_controller.cpp)
+target_link_libraries(sim_robot_controller ${SUBSTATION_COMMON_LIBRARIES})
 
 # for visual servoing teleoperation application.
 

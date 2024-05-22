@@ -5,6 +5,10 @@
  */
 
 // Simulation keys 
+#include <iostream>
+#include <vector>
+
+using namespace std;
 string JOINT_ANGLES_KEY = "sai2::sim::power::panda::sensors::q";
 string JOINT_VELOCITIES_KEY = "sai2::sim::power::panda::sensors::dq";
 string JOINT_TORQUES_COMMANDED_KEY = "sai2::sim::power::panda::actuators::fgc";
@@ -36,6 +40,7 @@ string SIGMA_FORCE_KEY = "sai2::sim::power::dual_proxy::sigma_force";
 string ROBOT_DEFAULT_ROT_KEY = "sai2::sim::power::dual_proxy::robot_default_rot";
 string ROBOT_DEFAULT_POS_KEY = "sai2::sim::power::dual_proxy::robot_default_pos";
 string HAPTIC_DEVICE_READY_KEY = "sai2::sim::power::dual_proxy::haptic_device_ready";
+
 
 // Haptics 
 vector<string> DEVICE_MAX_STIFFNESS_KEYS = {
